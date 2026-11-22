@@ -653,3 +653,12 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '标注状态': '业务场景标注样例3',
   '场景版本': '业务场景标注样例3'}]
 }
+
+
+# 训练窗口相关示例（旧周期写法、已受理跑次、历史模型产物）单独放在 seed_training.py。
+from app.seed_training import TRAINING_SEED_ROWS  # noqa: E402
+
+for _module, _rows in TRAINING_SEED_ROWS.items():
+    _bucket = SEED_ROWS.setdefault(_module, [])
+    _existing = {int(row.get("id", 0)) for row in _bucket}
+    _bucket.extend(row for row in _rows if int(row.get("id", 0)) not in _existing)

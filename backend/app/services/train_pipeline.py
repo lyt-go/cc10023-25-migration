@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.base import BaseModuleService
+from app.services.training_window import training_windows
 from app.store import store
 
 
@@ -11,18 +12,74 @@ class TrainPipelineService(BaseModuleService):
     MODULE = "train_pipeline"
     ENTITY = "流水线配置"
     OPERATION_TERM = "校验"
-    LIST_FIELDS = ["流水线编号", "流水线名称", "特征集", "算法类型", "超参数配置", "评估指标", "训练周期", "流水线版本"]
+    LIST_FIELDS = [
+        "流水线编号", "流水线名称", "特征集", "算法类型", "超参数配置", "评估指标",
+        "训练周期", "流水线版本", "当前训练窗口", "当前周期版本", "时区",
+    ]
     REQUIRED_FIELDS = ["流水线编号", "流水线名称", "特征集"]
     STATUS_ORDER = ["草稿", "待校验", "训练中", "已完成"]
     ACTION_RULES = {"提交校验": "待校验", "开始训练": "训练中", "确认完成": "已完成"}
     NEGATIVE_ACTIONS = []
 
-    # ── 链路4: 特征组 → 训练流水线 → 模型注册 ──
-    def train_and_register_model(self, pipeline_id: int) -> dict[str, Any]:
-        """执行训练流水线并将产物注册到模型中心，关联特征集和评估指标。"""
+    # ── 链路3/4: 特征组 → 训练流水线 → 模型注册 → 模型回放 ──
+    def train_and_register_model(self, pipeline_id: int, *,
+                                 schedule_id: int | None = None,
+                                 cycle_version: str | None = None,
+                                 partitions: list[str] | None = None,
+                                 policy: str = "carry_over_old") -> dict[str, Any]:
+        """按当前版本化训练窗口训练，并把实际读取的分区和周期来源写进模型产物。
+
+        没有可用窗口时会先按流水的旧训练周期迁出一版窗口；无法确定周期时
+        走原来的演示逻辑，避免把历史链路直接打断。
+        """
         pipe = store.find(self.MODULE, pipeline_id)
         if pipe is None:
             return {"ok": False, "message": f"流水线 {pipeline_id} 不存在"}
+        window = training_windows._pick_window(
+            schedule_id=schedule_id, pipeline_id=pipeline_id, version=cycle_version)
+        if window is None:
+            result = training_windows.start_training(
+                schedule_id=schedule_id, pipeline_id=pipeline_id,
+                version=cycle_version, partitions=partitions,
+                policy=policy, auto_migrate=True,
+            )
+            if result.get("ok"):
+                return result
+            if "没有可用的训练窗口" not in str(result.get("message", "")):
+                return result
+            return self._train_without_window(pipeline_id)
+
+        pipe["status"] = "训练中"
+        pipe["pending"] = True
+        result = training_windows.start_training(
+            schedule_id=schedule_id or int(float(str(window.get("关联调度") or 0) or 0)),
+            pipeline_id=pipeline_id,
+            version=window.get("周期版本"),
+            partitions=partitions,
+        )
+        if result.get("ok"):
+            result["feature_set"] = pipe.get("特征集", "")
+            result["evaluation_metrics"] = pipe.get("评估指标", "")
+        return result
+
+    def start_training_from_window(self, pipeline_id: int, **kwargs: Any) -> dict[str, Any]:
+        return training_windows.start_training(pipeline_id=pipeline_id, **kwargs)
+
+    def migrate_training_cycle(self, pipeline_id: int, **kwargs: Any) -> dict[str, Any]:
+        """把流水线的旧训练周期迁移成版本化窗口（没有调度时自动补建）。"""
+        return training_windows.migrate_pipeline(pipeline_id, **kwargs)
+
+    def training_input_manifest(self, pipeline_id: int, **kwargs: Any) -> dict[str, Any]:
+        return training_windows.build_manifest(pipeline_id=pipeline_id, **kwargs)
+
+    def dispatch_training_inputs(self, pipeline_id: int, **kwargs: Any) -> dict[str, Any]:
+        return training_windows.dispatch_manifest(pipeline_id=pipeline_id, **kwargs)
+
+    def replay_model_window(self, model_id: int) -> dict[str, Any]:
+        return training_windows.replay_model(model_id)
+
+    def _train_without_window(self, pipeline_id: int) -> dict[str, Any]:
+        pipe = store.find(self.MODULE, pipeline_id)
         pipe["status"] = "训练中"
         pipe["pending"] = True
         model_rows = store.rows("model_registry")
@@ -40,6 +97,9 @@ class TrainPipelineService(BaseModuleService):
             "模型文件": f"models/pipeline_{pipeline_id}.pkl",
             "评估分数": "0.892",
             "部署状态": "未部署",
+            "关联流水线": str(pipeline_id),
+            "周期来源": "未确定",
+            "训练输入快照": {},
         })
         pipe["status"] = "已完成"
         pipe["pending"] = False
@@ -70,6 +130,8 @@ class TrainPipelineService(BaseModuleService):
         pipe = store.find(self.MODULE, pipeline_id)
         if pipe is None:
             return {"ok": False}
+        window = training_windows._pick_window(
+            schedule_id=None, pipeline_id=pipeline_id, version=None)
         sched_rows = store.rows("pipeline_schedule")
         next_id = max((int(r.get("id", 0)) for r in sched_rows), default=0) + 1
         sched_rows.append({
@@ -86,7 +148,14 @@ class TrainPipelineService(BaseModuleService):
             "最大重试数": "3",
             "调度状态": "草稿",
         })
-        return {"ok": True, "schedule_id": next_id, "pipeline_id": pipeline_id}
+        schedule = sched_rows[-1]
+        if window is not None:
+            schedule["周期版本"] = window.get("周期版本")
+            schedule["窗口编号"] = window.get("窗口编号")
+            schedule["窗口起止日期"] = (
+                f"{window.get('开始日期')} ~ {window.get('结束日期')}")
+        return {"ok": True, "schedule_id": next_id, "pipeline_id": pipeline_id,
+                "cycle_version": (window or {}).get("周期版本")}
 
     def query_pipeline_evaluation(self, pipeline_id: int) -> dict[str, Any]:
         """查询训练流水线的评估指标结果，包括AUC、logloss和特征重要性排名。"""

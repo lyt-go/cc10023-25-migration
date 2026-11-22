@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.base import BaseModuleService
+from app.services.training_window import training_windows
 from app.store import store
 
 
@@ -11,11 +12,40 @@ class ModelRegistryService(BaseModuleService):
     MODULE = "model_registry"
     ENTITY = "模型注册"
     OPERATION_TERM = "存储"
-    LIST_FIELDS = ["模型编号", "模型名称", "算法类型", "训练特征", "模型版本", "模型文件", "评估分数", "部署状态"]
+    LIST_FIELDS = [
+        "模型编号", "模型名称", "算法类型", "训练特征", "模型版本", "模型文件",
+        "评估分数", "部署状态", "周期版本", "周期来源", "训练分区", "起止日期",
+    ]
     REQUIRED_FIELDS = ["模型编号", "模型名称", "算法类型"]
     STATUS_ORDER = ["草稿", "待验收", "已注册", "已废弃"]
     ACTION_RULES = {"提交验收": "待验收", "确认注册": "已注册", "标记废弃": "已废弃"}
     NEGATIVE_ACTIONS = []
+
+    def replay_training_window(self, model_id: int) -> dict[str, Any]:
+        """从模型详情回放当时实际读取的分区、周期版本和时间范围。
+
+        回放是只读的：不占用分区、不改变当前窗口，调度接口会把它关联回
+        当时那一版周期。
+        """
+        return training_windows.replay_model(model_id)
+
+    def training_input_manifest(self, model_id: int) -> dict[str, Any]:
+        """按模型冻结的窗口版本生成清单，便于核对“当时应读 vs 实际读到”。"""
+        replay = training_windows.replay_model(model_id)
+        if not replay.get("ok"):
+            return replay
+        manifest = training_windows.build_manifest(
+            schedule_id=replay.get("schedule_id"),
+            version=replay.get("cycle_version"),
+            persist=False,
+            include_claims=False,
+        )
+        # 回看的是历史窗口当时的计划范围，不叠加当前的分区占用状态。
+        for slot in manifest.get("日期分区", []):
+            slot["状态"] = "历史计划"
+        if manifest.get("ok"):
+            manifest["回放分区"] = replay.get("partitions")
+        return {"ok": True, "replay": replay, "manifest": manifest}
 
     # ── 链路4: 模型注册 → 批量预测 → 挖掘结果 ──
     def deploy_and_predict(self, model_id: int) -> dict[str, Any]:

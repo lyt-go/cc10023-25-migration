@@ -233,6 +233,8 @@ def test_chain9_corr_to_selection():
 
 
 if __name__ == "__main__":
+    from app.store import store
+
     tests = [
         test_chain1_source_to_snapshot,
         test_chain2_slice_to_iv,
@@ -247,6 +249,8 @@ if __name__ == "__main__":
     passed = 0
     failed = 0
     for test in tests:
+        # 每条链路都从示例数据重新开始，避免前一条链路的状态影响后一条。
+        store.reset()
         try:
             test()
             print(f"[PASS] {test.__name__}")

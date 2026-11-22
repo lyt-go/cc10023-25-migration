@@ -70,3 +70,21 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .analysis-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 12px 0; }
 .analysis-bar { flex: 1; border-radius: 4px 4px 0 0; background: var(--brand); min-width: 24px; position: relative; transition: height 0.4s; }
 .analysis-bar span { position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; }
+/* 训练窗口 */
+.notice-text { color: #0f766e; font-size: 13px; }
+.tag { display: inline-block; border-radius: 10px; padding: 0 8px; font-size: 12px; margin-left: 6px; }
+.tag.warn { background: #fef3c7; color: #92400e; }
+.tag.ok { background: #dcfce7; color: #166534; }
+.panel { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+.panel h3 { margin: 0 0 8px; font-size: 15px; }
+.panel h4 { margin: 8px 0 4px; font-size: 13px; color: #92400e; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; margin: 0; }
+.kv dt { color: var(--muted); font-size: 12px; }
+.kv dd { margin: 0; font-size: 13px; }
+.mono { font-family: monospace; font-size: 12px; }
+.pending-box { margin-top: 8px; padding: 8px 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-size: 13px; }
+.pending-box ul, .reason-list { margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: #4b5563; }
+.partition-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.partition-chip { padding: 3px 8px; border-radius: 4px; font-size: 12px; border: 1px solid var(--border); }
+.partition-chip.is-free { background: #ecfdf5; border-color: #6ee7b7; color: #065f46; }
+.partition-chip.is-taken { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }

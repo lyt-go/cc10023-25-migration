@@ -17,6 +17,7 @@
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
+│   ├── app/services/training_window.py  版本化训练窗口（迁移/清单/下发/回放）
 │   ├── app/services/base.py     共享服务骨架
 │   └── app/store.py          内存数据仓库与示例数据
 ├── .gitignore
@@ -68,6 +69,30 @@ npm run dev
 | 数据导出管理 | `data_export` | 导出任务 | 任务编号、数据来源、导出范围 |
 | 流水线调度 | `pipeline_schedule` | 调度配置 | 调度编号、关联流水线、Cron表达式 |
 | 业务场景标注 | `scenario_label` | 场景标注 | 标注编号、场景名称、关联特征 |
+
+## 训练窗口（版本化训练周期）
+
+历史数据里训练周期有两种写法：`训练周期` 里的 `weekly`，以及直接填在
+`训练周期` / `Cron表达式` 里的五段 Cron。`app/services/training_window.py`
+把两者归一成带版本、时区、起止日期和分区范围的训练窗口，调度、训练流水线和
+模型回放都消费同一份数据：
+
+- 迁移：`migrate_schedule` / `migrate_pipeline` 生成新的周期版本 `v1`、`v2`…，
+  旧窗口保留为“已替代”。不传时区时按 `Asia/Shanghai` 计算，但状态标成
+  `待确认`，并在 `原表达式` / `待核项` 里保留旧表达式和需人工核对的原因。
+- 已受理旧跑次：`accept_schedule` 冻结当时的周期版本和分区，跑次按原窗口回放。
+- 换代重合：迁移时用 `policy` 决定重合日期归属——`carry_over_old`（默认，
+  沿用旧计划）或 `handover_unconsumed`（已消费保留旧跑次，未消费分区交给新窗口）。
+- 分区占用：`partition_claim` 保证同一分区同一时刻只有一个有效占用，换代期间
+  重复下发会被跳过而不是重复触发。
+- 训练输入时段清单：`build_manifest` 输出时区、起止日期、分区范围和逐日期分区。
+- 训练：`train_and_register_model` / `start_training` 把实际读取的分区、周期版本
+  和周期来源写进模型产物的 `训练输入快照`。
+- 回放：`replay_model` 按模型冻结的快照只读回放原分区与原时间范围，并返回
+  调度接口当时的周期版本（`schedule_link.cycle_version`）。
+
+接口前缀 `/api/train-windows`，另有前端页面 `/training_window` 演示
+“受理旧跑次 → 迁移 → 按清单下发 → 训练 → 回放”的完整流程。
 
 ## 约定
 
